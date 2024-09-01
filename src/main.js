@@ -63,7 +63,7 @@ export default class Main {
         this.control.attach( this.mesh );
 		this.world.scene.add( this.control );
 
-        new THREE.BufferGeometryLoader().setPath( '../assets/' ).load( 'suzanne_buffergeometry.json', ( geometry ) => {
+        new THREE.BufferGeometryLoader().setPath( (typeof ESBUILD !== 'undefined') ? './assets/' : '../assets/' ).load( 'suzanne_buffergeometry.json', ( geometry ) => {
             let mergedGeometry = mergeVertices(geometry, 1e-6);
 
             this.bvh2 = mergedGeometry.computeBoundsTree();
