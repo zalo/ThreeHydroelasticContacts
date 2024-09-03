@@ -29,15 +29,14 @@ export default class Main {
         // Configure Settings
         this.contactParams = {
             //loadMesh: this.loadMesh.bind(this),
-            showMesh: true,
+            //showMesh: true,
             resolution: 10,
         };
         this.gui = new GUI();
         //this.gui.add(this.latticeParams, 'loadMesh' ).name( 'Load Mesh' );
-        this.gui.add(this.contactParams, 'showMesh').name( 'Show Mesh' ).onFinishChange(async (value) => {
-            if(this.mesh){ this.mesh.visible = value; }});
-        this.gui.add(this.contactParams, 'resolution', 3, 50, 1).name( 'Resolution' ).onFinishChange(async (value) => {
-            if(this.mesh){  }});
+        //this.gui.add(this.contactParams, 'showMesh').name( 'Show Mesh' ).onFinishChange(async (value) => {
+        //    if(this.mesh){ this.mesh.visible = value; }});
+        this.gui.add(this.contactParams, 'resolution', 3, 40, 1).name( 'Resolution' ).onFinishChange(async (value) => { this.updateImplicitMesh(); });
 
         this.sphereGeo   = new THREE.SphereGeometry  (1.0, 32, 32);
         this.cylinderGeo = new THREE.CylinderGeometry(1, 1, 1, 8);
@@ -63,7 +62,8 @@ export default class Main {
         this.control.attach( this.mesh );
 		this.world.scene.add( this.control );
 
-        new THREE.BufferGeometryLoader().setPath( (typeof ESBUILD !== 'undefined') ? './assets/' : '../assets/' ).load( 'suzanne_buffergeometry.json', ( geometry ) => {
+        this.isDeployed = document.pathname !== '/';
+        new THREE.BufferGeometryLoader().setPath( this.isDeployed ? './assets/' : '../assets/' ).load( 'suzanne_buffergeometry.json', ( geometry ) => {
             let mergedGeometry = mergeVertices(geometry, 1e-6);
 
             this.bvh2 = mergedGeometry.computeBoundsTree();
@@ -94,15 +94,16 @@ export default class Main {
                         float b = 0.1067 + x * (12.5925 - x * (60.1097 - x * (109.0745 - x * ( 88.5066 - x * 26.8183))));
                         return vec4(r, g, b, 1.0);
                     }
-                    void main() { gl_FragColor = turbo( clamp(vPenetrationDepth, 0.0, 1.0) ); }`
+                    void main() { gl_FragColor = turbo( clamp(vPenetrationDepth * 2.0, 0.0, 1.0) ); }`
             } );
 
             this.implicitMesh = new THREE.Mesh(new THREE.BufferGeometry(), implicitMaterial );
             this.world.scene.add(this.implicitMesh);
+            this.updateImplicitMesh();
         });
     }
 
-    updateMesh(calculateImplicitFunction, resolution = 15, 
+    updateMarchingCubes(calculateImplicitFunction, resolution = 15, 
         axisMin = new THREE.Vector3(-10, -10, -10), axisMax = new THREE.Vector3(10, 10, 10)) {
         // custom global variables
         this.points = [];
@@ -307,35 +308,36 @@ export default class Main {
     }
 
     calculateImplicitFunction(x, y, z, result) {
-        this.pointLocal1.set(x, y, z);
-        this.pointLocal2.set(x, y, z);
-
-        this.closest1 = this.bvh1.closestPointToPoint(this.pointLocal1.applyMatrix4( this.tmpInverseMatrix.copy( this.mesh.matrixWorld ).invert() ), this.closest1);
-        this.closest2 = this.bvh2.closestPointToPoint(this.pointLocal2.applyMatrix4( this.tmpInverseMatrix.copy( this.mesh2.matrixWorld ).invert() ), this.closest2);
-        let distance1 = this.closest1.distance;
-        let distance2 = this.closest2.distance;
+        this.closest1 = this.bvh1.closestPointToPoint(this.pointLocal1.set(x, y, z).applyMatrix4( this.tmpInverseMatrix.copy( this.mesh .matrixWorld ).invert() ), this.closest1);
+        this.closest2 = this.bvh2.closestPointToPoint(this.pointLocal2.set(x, y, z).applyMatrix4( this.tmpInverseMatrix.copy( this.mesh2.matrixWorld ).invert() ), this.closest2);
 
         this.derp   = getTriangleHitPointInfo(this.closest1.point, this.mesh.geometry, this.closest1.faceIndex, this.derp);
-        let inside1 = this.derp.face.normal.dot(this.pointLocal1.clone().sub(this.closest1.point)) > 0;
+        let inside1 = this.derp.face.normal.dot(this.pointLocal1.sub(this.closest1.point)) > 0;
         this.derp   = getTriangleHitPointInfo(this.closest2.point, this.mesh2.geometry, this.closest2.faceIndex, this.derp);
-        let inside2 = this.derp.face.normal.dot(this.pointLocal2.clone().sub(this.closest2.point)) > 0;
-        result.set(distance1 * inside1 ? -1.0 : 1.0, 
-                   distance2 * inside2 ? -1.0 : 1.0);
+        let inside2 = this.derp.face.normal.dot(this.pointLocal2.sub(this.closest2.point)) > 0;
+        result.set(this.closest1.distance * (inside1 ? -1.0 : 1.0), 
+                   this.closest2.distance * (inside2 ? -1.0 : 1.0));
     }
 
-    /** Update the simulation */
-    update(timeMS) {
-        this.timeMS = timeMS;
+    updateImplicitMesh() {
         if(this.implicitMesh){
             this.overlap .setFromObject(this.mesh );
             this.overlap2.setFromObject(this.mesh2);
             if(this.overlap.intersectsBox(this.overlap2)) {
                 this.implicitMesh.visible = true;
                 this.overlap = this.overlap.intersect(this.overlap2);
-                this.updateMesh(this.calculateImplicitFunction.bind(this), 10, this.overlap.min, this.overlap.max);
+                this.updateMarchingCubes(this.calculateImplicitFunction.bind(this), this.contactParams.resolution, this.overlap.min, this.overlap.max);
             }else{
                 this.implicitMesh.visible = false;
             }
+        }
+    }
+
+    /** Update the simulation */
+    update(timeMS) {
+        this.timeMS = timeMS;
+        if(!this.world.controls.enabled){
+            this.updateImplicitMesh();
         }
         this.world.controls.update();
         this.world.renderer.render(this.world.scene, this.world.camera);
