@@ -58,7 +58,7 @@ export default class Main {
 
         this.mesh = new THREE.Mesh( this.geometry , this.material  );
         this.world.scene.add( this.mesh );
-        this.mesh.position.set(0.0, 2.2, 0.5);
+        this.mesh.position.set(0.0, 2.1, 0.4);
         this.control.attach( this.mesh );
 		this.world.scene.add( this.control );
 
@@ -94,7 +94,7 @@ export default class Main {
                         float b = 0.1067 + x * (12.5925 - x * (60.1097 - x * (109.0745 - x * ( 88.5066 - x * 26.8183))));
                         return vec4(r, g, b, 1.0);
                     }
-                    void main() { gl_FragColor = turbo( clamp(vPenetrationDepth * 2.0, 0.0, 1.0) ); }`
+                    void main() { gl_FragColor = turbo( clamp(vPenetrationDepth * 3.0, 0.0, 1.0) ); }`
             } );
 
             this.implicitMesh = new THREE.Mesh(new THREE.BufferGeometry(), implicitMaterial );
@@ -125,7 +125,7 @@ export default class Main {
             let z = axisMin.z + axisRange.z * k / (resolution - 1);
             this.points.push( new THREE.Vector3(x,y,z) );
             calculateImplicitFunction(x, y, z, distanceResult);
-            this.values.push( (distanceResult.x - distanceResult.y) / (Math.abs(distanceResult.x) + Math.abs(distanceResult.y)) );
+            this.values.push( (distanceResult.x - distanceResult.y));// / (Math.abs(distanceResult.x) + Math.abs(distanceResult.y)) );
             this.depthValues.push( (Math.max(distanceResult.x, distanceResult.y)) );
         }
         
