@@ -1,12 +1,12 @@
-# [ThreeHydroelasticContact](https://zalo.github.io/ThreeHydroelasticContact/)
+# [ThreeHydroelasticContacts](https://zalo.github.io/ThreeHydroelasticContacts/)
 
 <p align="left">
-  <a href="https://github.com/zalo/ThreeHydroelasticContact/deployments/activity_log?environment=github-pages">
-      <img src="https://img.shields.io/github/deployments/zalo/ThreeHydroelasticContact/github-pages?label=Github%20Pages%20Deployment" title="Github Pages Deployment"></a>
-  <a href="https://github.com/zalo/ThreeHydroelasticContact/commits/master">
-      <img src="https://img.shields.io/github/last-commit/zalo/ThreeHydroelasticContact" title="Last Commit Date"></a>
-  <!--<a href="https://github.com/zalo/ThreeHydroelasticContact/blob/master/LICENSE">
-      <img src="https://img.shields.io/github/license/zalo/ThreeHydroelasticContact" title="License: Apache V2"></a>-->  <!-- No idea what license this should be! -->
+  <a href="https://github.com/zalo/ThreeHydroelasticContacts/deployments/activity_log?environment=github-pages">
+      <img src="https://img.shields.io/github/deployments/zalo/ThreeHydroelasticContacts/github-pages?label=Github%20Pages%20Deployment" title="Github Pages Deployment"></a>
+  <a href="https://github.com/zalo/ThreeHydroelasticContacts/commits/main">
+      <img src="https://img.shields.io/github/last-commit/zalo/ThreeHydroelasticContacts" title="Last Commit Date"></a>
+  <!--<a href="https://github.com/zalo/ThreeHydroelasticContacts/blob/master/LICENSE">
+      <img src="https://img.shields.io/github/license/zalo/ThreeHydroelasticContacts" title="License: Apache V2"></a>-->  <!-- No idea what license this should be! -->
 </p>
 
 A simple proof of concept for computing Hydroelastic-Style Contacts between SDFs in your browser!
