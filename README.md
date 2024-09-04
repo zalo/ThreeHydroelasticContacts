@@ -9,7 +9,7 @@
       <img src="https://img.shields.io/github/license/zalo/ThreeHydroelasticContacts" title="License: Apache V2"></a>-->  <!-- No idea what license this should be! -->
 </p>
 
-A simple proof of concept for computing Hydroelastic-Style Contacts between SDFs in your browser!
+A simple proof of concept for computing [Hydroelastic-Style Contact Manifolds](https://medium.com/toyotaresearch/rethinking-contact-simulation-for-robot-manipulation-434a56b5ec88) between Meshes or SDFs in your browser!
 
 ![Hydroelastic Contacts between Cubes](./assets/HydroelasticContacts.gif)
 ![Hydroelastic Contacts between a Cube and Suzanne the Monkey](./assets/HydroelasticContacts2.gif)
