@@ -94,7 +94,10 @@ export default class Main {
                         float b = 0.1067 + x * (12.5925 - x * (60.1097 - x * (109.0745 - x * ( 88.5066 - x * 26.8183))));
                         return vec4(r, g, b, 1.0);
                     }
-                    void main() { gl_FragColor = turbo( clamp(vPenetrationDepth * 3.0, 0.0, 1.0) ); }`
+                    void main() {
+                        if(vPenetrationDepth < 0.0) discard;
+                        gl_FragColor = turbo( clamp(vPenetrationDepth * 3.0, 0.0, 1.0) ); 
+                    }`
             } );
 
             this.implicitMesh = new THREE.Mesh(new THREE.BufferGeometry(), implicitMaterial );
