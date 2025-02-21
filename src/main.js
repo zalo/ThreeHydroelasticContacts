@@ -30,7 +30,7 @@ export default class Main {
         this.contactParams = {
             //loadMesh: this.loadMesh.bind(this),
             //showMesh: true,
-            resolution: 10,
+            resolution: 20,
         };
         this.gui = new GUI();
         //this.gui.add(this.latticeParams, 'loadMesh' ).name( 'Load Mesh' );
@@ -45,10 +45,12 @@ export default class Main {
         this.bvh1 = this.geometry.computeBoundsTree();
         this.material = new THREE.MeshPhysicalMaterial({ color: 0xffffff,  wireframe: true, side: THREE.FrontSide }); //transparent: true, opacity: 0.25, side: THREE.FrontSide,
 
-        this.tmpInverseMatrix = new THREE.Matrix4();
+        this.tmpInverseMatrix1 = new THREE.Matrix4();
+        this.tmpInverseMatrix2 = new THREE.Matrix4();
         this.pointLocal1 = new THREE.Vector3();
         this.pointLocal2 = new THREE.Vector3();
         this.color = new THREE.Color();
+        this.closest1 = {};
 
         // Construct the render world
         this.world = new World(this);
@@ -76,9 +78,13 @@ export default class Main {
             this.overlap .setFromObject(this.mesh );
             this.overlap2.setFromObject(this.mesh2);
             this.overlap = this.overlap.intersect(this.overlap2);
+
+            this.tempRay = new THREE.Ray();
+            this.tempRay.direction.set(1, 1, 1).normalize();
             
             let implicitMaterial = new THREE.ShaderMaterial( {
                 side: THREE.DoubleSide,
+                //wireframe: true,
                 vertexShader: `
                     attribute float penetrationDepth; varying float vPenetrationDepth;
                     void main() {
@@ -310,29 +316,108 @@ export default class Main {
         this.implicitMesh.geometry.buffersNeedUpdate = true;
     }
 
-    calculateImplicitFunction(x, y, z, result) {
-        this.closest1 = this.bvh1.closestPointToPoint(this.pointLocal1.set(x, y, z).applyMatrix4( this.tmpInverseMatrix.copy( this.mesh .matrixWorld ).invert() ), this.closest1);
-        this.closest2 = this.bvh2.closestPointToPoint(this.pointLocal2.set(x, y, z).applyMatrix4( this.tmpInverseMatrix.copy( this.mesh2.matrixWorld ).invert() ), this.closest2);
+    /** @param {THREE.Mesh} mesh */
+    sampleSignedDistance(mesh, x, y, z) {
+        this.tempRay.origin.set(x, y, z);
+        let hit1 = mesh .geometry.boundsTree.raycastFirst(this.tempRay, THREE.DoubleSide);
+        mesh.geometry.boundsTree.closestPointToPoint(this.tempRay.origin, this.closest1);
+        //this.derp = getTriangleHitPointInfo(this.closest1.point, this.mesh.geometry, this.closest1.faceIndex, this.derp);
+        return this.closest1.distance * ((hit1 && hit1.face.normal.dot( this.tempRay.direction ) > 0.0) ? 1.0 : -1.0);
+    }
 
-        this.derp   = getTriangleHitPointInfo(this.closest1.point, this.mesh.geometry, this.closest1.faceIndex, this.derp);
-        let inside1 = this.derp.face.normal.dot(this.pointLocal1.sub(this.closest1.point)) > 0;
-        this.derp   = getTriangleHitPointInfo(this.closest2.point, this.mesh2.geometry, this.closest2.faceIndex, this.derp);
-        let inside2 = this.derp.face.normal.dot(this.pointLocal2.sub(this.closest2.point)) > 0;
-        result.set(this.closest1.distance * (inside1 ? -1.0 : 1.0), 
-                   this.closest2.distance * (inside2 ? -1.0 : 1.0));
+    sampleCacheAtIndices(mesh, xIndex, yIndex, zIndex) {
+        const dim = 72;
+        // Calculate the index of the cache
+        let index = xIndex + yIndex * dim + zIndex * dim * dim;
+        index = Math.min(Math.max(index, 0), dim * dim * dim - 1);
+
+        // Check if the cache is valid
+        if(mesh.userData.distanceCache[index] === 0.0) {
+            // Transform the quantized position back into bounding box relative
+            let quantizedBoundingBoxRelative = new THREE.Vector3(Math.floor(index % dim) / dim, 
+                                                                 Math.floor(index / dim) % dim  / dim, 
+                                                                 Math.floor(index / dim  / dim) / dim);
+            this.pointLocal1.copy(quantizedBoundingBoxRelative).multiply(mesh.userData.boundingBoxSize).add(mesh.userData.boundingBoxMin);
+
+            mesh.userData.distanceCache[index] = this.sampleSignedDistance(mesh, this.pointLocal1.x, this.pointLocal1.y, this.pointLocal1.z);
+        }
+
+        return mesh.userData.distanceCache[index];
+    }
+
+    /** @param {THREE.Mesh} mesh */
+    sampleSignedDistanceWithCache(mesh, x, y, z) {
+        const dim = 72;
+        if(!mesh.userData.distanceCache) {
+            mesh.userData.distanceCache = new Float32Array(dim * dim * dim);
+            
+            // Pre define the bounding box in local space
+            mesh.userData.boundingBox     = mesh.geometry.boundingBox;
+            mesh.userData.boundingBoxSize = mesh.userData.boundingBox.getSize(new THREE.Vector3());
+            mesh.userData.boundingBoxMin  = mesh.userData.boundingBox.min.clone();
+            mesh.userData.boundingBoxMin .subScalar(0.01);
+            mesh.userData.boundingBoxSize.addScalar(0.02);
+
+            // Preallocate temp variables
+            mesh.userData.boundingBoxRelative = new THREE.Vector3();
+            mesh.userData.qBBR = new THREE.Vector3();
+            mesh.userData.fractionalBoundingBoxRelative = new THREE.Vector3();
+        }
+        // Transform the point into local space
+        this.pointLocal1.set(x, y, z).applyMatrix4( mesh.matrix );
+
+        // Transform into bounding box relative coordinates
+        mesh.userData.boundingBoxRelative.copy(this.pointLocal1).sub(mesh.userData.boundingBoxMin).divide(mesh.userData.boundingBoxSize).multiplyScalar(dim);
+        // Quantized Bounding Box Relative
+        mesh.userData.qBBR.set(Math.floor(mesh.userData.boundingBoxRelative.x),
+                               Math.floor(mesh.userData.boundingBoxRelative.y),
+                               Math.floor(mesh.userData.boundingBoxRelative.z));
+
+        // Use the nearest cache value
+        //return this.sampleCacheAtIndices(mesh, qBBR.x, qBBR.y, qBBR.z, boundingBoxSize, boundingBoxMin);
+
+        // Use trilinear interpolation to get an interpolated value from the cache
+        mesh.userData.fractionalBoundingBoxRelative.copy(mesh.userData.boundingBoxRelative).sub(mesh.userData.qBBR);
+        let x00 = this.sampleCacheAtIndices(mesh, mesh.userData.qBBR.x  , mesh.userData.qBBR.y  , mesh.userData.qBBR.z  ) * (1.0 - mesh.userData.fractionalBoundingBoxRelative.x) +
+                  this.sampleCacheAtIndices(mesh, mesh.userData.qBBR.x+1, mesh.userData.qBBR.y  , mesh.userData.qBBR.z  ) *        mesh.userData.fractionalBoundingBoxRelative.x;
+        let x01 = this.sampleCacheAtIndices(mesh, mesh.userData.qBBR.x  , mesh.userData.qBBR.y  , mesh.userData.qBBR.z+1) * (1.0 - mesh.userData.fractionalBoundingBoxRelative.x) +
+                  this.sampleCacheAtIndices(mesh, mesh.userData.qBBR.x+1, mesh.userData.qBBR.y  , mesh.userData.qBBR.z+1) *        mesh.userData.fractionalBoundingBoxRelative.x;
+        let x10 = this.sampleCacheAtIndices(mesh, mesh.userData.qBBR.x  , mesh.userData.qBBR.y+1, mesh.userData.qBBR.z  ) * (1.0 - mesh.userData.fractionalBoundingBoxRelative.x) +
+                  this.sampleCacheAtIndices(mesh, mesh.userData.qBBR.x+1, mesh.userData.qBBR.y+1, mesh.userData.qBBR.z  ) *        mesh.userData.fractionalBoundingBoxRelative.x;
+        let x11 = this.sampleCacheAtIndices(mesh, mesh.userData.qBBR.x  , mesh.userData.qBBR.y+1, mesh.userData.qBBR.z+1) * (1.0 - mesh.userData.fractionalBoundingBoxRelative.x) +
+                  this.sampleCacheAtIndices(mesh, mesh.userData.qBBR.x+1, mesh.userData.qBBR.y+1, mesh.userData.qBBR.z+1) *        mesh.userData.fractionalBoundingBoxRelative.x;
+        let y00 = x00 * (1.0 - mesh.userData.fractionalBoundingBoxRelative.y) + x10 * mesh.userData.fractionalBoundingBoxRelative.y;
+        let y01 = x01 * (1.0 - mesh.userData.fractionalBoundingBoxRelative.y) + x11 * mesh.userData.fractionalBoundingBoxRelative.y;
+        let z00 = y00 * (1.0 - mesh.userData.fractionalBoundingBoxRelative.z) + y01 * mesh.userData.fractionalBoundingBoxRelative.z;
+
+        return z00;
+    }
+
+    calculateImplicitFunction(x, y, z, result) {
+        result.set(this.sampleSignedDistanceWithCache(this.mesh , x, y, z),
+                   this.sampleSignedDistanceWithCache(this.mesh2, x, y, z));
     }
 
     updateImplicitMesh() {
         if(this.implicitMesh){
+            let boundingBoxTiming = performance.now();
             this.overlap .setFromObject(this.mesh );
             this.overlap2.setFromObject(this.mesh2);
+            boundingBoxTiming = performance.now() - boundingBoxTiming;
+            let geometryTiming = performance.now();
             if(this.overlap.intersectsBox(this.overlap2)) {
                 this.implicitMesh.visible = true;
                 this.overlap = this.overlap.intersect(this.overlap2);
+
+                this.mesh .matrix.copy( this.mesh .matrixWorld ).invert();
+                this.mesh2.matrix.copy( this.mesh2.matrixWorld ).invert();
+
                 this.updateMarchingCubes(this.calculateImplicitFunction.bind(this), this.contactParams.resolution, this.overlap.min, this.overlap.max);
             }else{
                 this.implicitMesh.visible = false;
             }
+            geometryTiming = performance.now() - geometryTiming;
+            //console.log("Time to compute overlap box: " + boundingBoxTiming + "ms", "Time to compute geometry: " + geometryTiming + "ms");
         }
     }
 
