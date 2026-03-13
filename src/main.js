@@ -101,13 +101,14 @@ export default class Main {
                         return vec4(r, g, b, 1.0);
                     }
                     void main() {
-                        if(vPenetrationDepth < 0.0) discard;
-                        gl_FragColor = turbo( clamp(vPenetrationDepth * 3.0, 0.0, 1.0) ); 
+                        gl_FragColor = turbo( clamp(vPenetrationDepth * 3.0, 0.0, 1.0) );
                     }`
             } );
 
             this.implicitMesh = new THREE.Mesh(new THREE.BufferGeometry(), implicitMaterial );
             this.world.scene.add(this.implicitMesh);
+            this.arrowGroup = new THREE.Group();
+            this.world.scene.add(this.arrowGroup);
             this.updateImplicitMesh();
         });
     }
@@ -308,12 +309,207 @@ export default class Main {
             }
         }
 
-        this.implicitMesh.geometry.setIndex( indices );
-        this.implicitMesh.geometry.setAttribute( 'position', new THREE.BufferAttribute( new Float32Array(vertices), 3 ) );
-        //this.implicitMesh.geometry.setAttribute( 'color', new THREE.BufferAttribute( new Float32Array(penetrationDepth), 3 ) );
-        this.implicitMesh.geometry.setAttribute( 'penetrationDepth', new THREE.BufferAttribute( new Float32Array(penetrationDepth), 1 ) );
+        // Clip triangles at penetrationDepth = 0 boundary
+        let clipped = this.clipTriangles(vertices, penetrationDepth);
+
+        this.implicitMesh.geometry.setIndex( clipped.indices );
+        this.implicitMesh.geometry.setAttribute( 'position', new THREE.BufferAttribute( new Float32Array(clipped.vertices), 3 ) );
+        this.implicitMesh.geometry.setAttribute( 'penetrationDepth', new THREE.BufferAttribute( new Float32Array(clipped.penetrationDepth), 1 ) );
         this.implicitMesh.geometry.needsUpdate = true;
         this.implicitMesh.geometry.buffersNeedUpdate = true;
+
+        // Store clipped data for contact force computation
+        this.clippedVertices = clipped.vertices;
+        this.clippedDepths = clipped.penetrationDepth;
+        this.clippedNumTris = clipped.penetrationDepth.length / 3;
+    }
+
+    clipTriangles(vertices, penetrationDepth) {
+        let outVerts = [];
+        let outDepths = [];
+        let outIndices = [];
+        let vertIdx = 0;
+
+        let numTris = penetrationDepth.length / 3;
+        for (let t = 0; t < numTris; t++) {
+            let base = t * 9;
+            let dBase = t * 3;
+
+            let d = [penetrationDepth[dBase], penetrationDepth[dBase + 1], penetrationDepth[dBase + 2]];
+            let v = [
+                [vertices[base], vertices[base + 1], vertices[base + 2]],
+                [vertices[base + 3], vertices[base + 4], vertices[base + 5]],
+                [vertices[base + 6], vertices[base + 7], vertices[base + 8]]
+            ];
+
+            let numInside = (d[0] >= 0 ? 1 : 0) + (d[1] >= 0 ? 1 : 0) + (d[2] >= 0 ? 1 : 0);
+
+            if (numInside === 0) continue;
+
+            if (numInside === 3) {
+                outVerts.push(...v[0], ...v[1], ...v[2]);
+                outDepths.push(d[0], d[1], d[2]);
+                outIndices.push(vertIdx, vertIdx + 1, vertIdx + 2);
+                vertIdx += 3;
+            } else if (numInside === 1) {
+                let a = d[0] >= 0 ? 0 : (d[1] >= 0 ? 1 : 2);
+                let b = (a + 1) % 3, c = (a + 2) % 3;
+
+                let tab = d[a] / (d[a] - d[b]);
+                let tac = d[a] / (d[a] - d[c]);
+
+                let vab = v[a].map((val, i) => val + (v[b][i] - val) * tab);
+                let vac = v[a].map((val, i) => val + (v[c][i] - val) * tac);
+
+                outVerts.push(...v[a], ...vab, ...vac);
+                outDepths.push(d[a], 0, 0);
+                outIndices.push(vertIdx, vertIdx + 1, vertIdx + 2);
+                vertIdx += 3;
+            } else {
+                let a = d[0] < 0 ? 0 : (d[1] < 0 ? 1 : 2);
+                let b = (a + 1) % 3, c = (a + 2) % 3;
+
+                let tba = d[b] / (d[b] - d[a]);
+                let tca = d[c] / (d[c] - d[a]);
+
+                let vba = v[b].map((val, i) => val + (v[a][i] - val) * tba);
+                let vca = v[c].map((val, i) => val + (v[a][i] - val) * tca);
+
+                outVerts.push(...v[b], ...vba, ...v[c]);
+                outDepths.push(d[b], 0, d[c]);
+                outIndices.push(vertIdx, vertIdx + 1, vertIdx + 2);
+                vertIdx += 3;
+
+                outVerts.push(...vba, ...vca, ...v[c]);
+                outDepths.push(0, 0, d[c]);
+                outIndices.push(vertIdx, vertIdx + 1, vertIdx + 2);
+                vertIdx += 3;
+            }
+        }
+
+        return { vertices: outVerts, penetrationDepth: outDepths, indices: outIndices };
+    }
+
+    findConnectedComponents(vertices, numTris) {
+        let edgeToTris = new Map();
+
+        function vertKey(vertices, vIdx) {
+            let base = vIdx * 3;
+            return `${vertices[base].toFixed(5)}_${vertices[base + 1].toFixed(5)}_${vertices[base + 2].toFixed(5)}`;
+        }
+
+        function edgeKey(k1, k2) {
+            return k1 < k2 ? `${k1}|${k2}` : `${k2}|${k1}`;
+        }
+
+        for (let t = 0; t < numTris; t++) {
+            let v0 = vertKey(vertices, t * 3);
+            let v1 = vertKey(vertices, t * 3 + 1);
+            let v2 = vertKey(vertices, t * 3 + 2);
+
+            let edges = [edgeKey(v0, v1), edgeKey(v1, v2), edgeKey(v0, v2)];
+            for (let e of edges) {
+                if (!edgeToTris.has(e)) edgeToTris.set(e, []);
+                edgeToTris.get(e).push(t);
+            }
+        }
+
+        let adj = Array.from({ length: numTris }, () => []);
+        for (let [, tris] of edgeToTris) {
+            for (let i = 0; i < tris.length; i++) {
+                for (let j = i + 1; j < tris.length; j++) {
+                    adj[tris[i]].push(tris[j]);
+                    adj[tris[j]].push(tris[i]);
+                }
+            }
+        }
+
+        let component = new Int32Array(numTris).fill(-1);
+        let numComponents = 0;
+
+        for (let t = 0; t < numTris; t++) {
+            if (component[t] >= 0) continue;
+            let stack = [t];
+            component[t] = numComponents;
+            while (stack.length > 0) {
+                let cur = stack.pop();
+                for (let neighbor of adj[cur]) {
+                    if (component[neighbor] < 0) {
+                        component[neighbor] = numComponents;
+                        stack.push(neighbor);
+                    }
+                }
+            }
+            numComponents++;
+        }
+
+        return { component, numComponents };
+    }
+
+    computeAndDrawContactForces(vertices, penetrationDepth, numTris) {
+        // Clear previous arrows
+        for (let i = this.arrowGroup.children.length - 1; i >= 0; i--) {
+            this.arrowGroup.remove(this.arrowGroup.children[i]);
+        }
+
+        if (numTris === 0) return;
+
+        let { component, numComponents } = this.findConnectedComponents(vertices, numTris);
+
+        let forces = Array.from({ length: numComponents }, () => new THREE.Vector3());
+        let centroids = Array.from({ length: numComponents }, () => new THREE.Vector3());
+        let totalAreas = new Float64Array(numComponents);
+
+        let v0 = new THREE.Vector3(), v1 = new THREE.Vector3(), v2 = new THREE.Vector3();
+        let e1 = new THREE.Vector3(), e2 = new THREE.Vector3();
+        let normal = new THREE.Vector3();
+
+        for (let t = 0; t < numTris; t++) {
+            let base = t * 9;
+            let dBase = t * 3;
+            let comp = component[t];
+
+            v0.set(vertices[base], vertices[base + 1], vertices[base + 2]);
+            v1.set(vertices[base + 3], vertices[base + 4], vertices[base + 5]);
+            v2.set(vertices[base + 6], vertices[base + 7], vertices[base + 8]);
+
+            e1.subVectors(v1, v0);
+            e2.subVectors(v2, v0);
+            normal.crossVectors(e1, e2);
+
+            let area = normal.length() * 0.5;
+            if (area < 1e-10) continue;
+
+            normal.normalize();
+
+            let avgDepth = (penetrationDepth[dBase] + penetrationDepth[dBase + 1] + penetrationDepth[dBase + 2]) / 3;
+            let pressure = avgDepth * area;
+
+            forces[comp].addScaledVector(normal, pressure);
+
+            let cx = (v0.x + v1.x + v2.x) / 3;
+            let cy = (v0.y + v1.y + v2.y) / 3;
+            let cz = (v0.z + v1.z + v2.z) / 3;
+            centroids[comp].x += cx * area;
+            centroids[comp].y += cy * area;
+            centroids[comp].z += cz * area;
+            totalAreas[comp] += area;
+        }
+
+        for (let c = 0; c < numComponents; c++) {
+            if (totalAreas[c] < 1e-10) continue;
+            centroids[c].divideScalar(totalAreas[c]);
+
+            let forceMag = forces[c].length();
+            if (forceMag < 1e-10) continue;
+
+            let dir = forces[c].clone().normalize().negate();
+            let arrowLength = Math.sqrt(forceMag) * 3 + 0.15;
+            let headLength = arrowLength * 0.3;
+            let headWidth = headLength * 0.5;
+            let arrow = new THREE.ArrowHelper(dir, centroids[c], arrowLength, 0xff2200, headLength, headWidth);
+            this.arrowGroup.add(arrow);
+        }
     }
 
     /** @param {THREE.Mesh} mesh */
@@ -413,8 +609,13 @@ export default class Main {
                 this.mesh2.matrix.copy( this.mesh2.matrixWorld ).invert();
 
                 this.updateMarchingCubes(this.calculateImplicitFunction.bind(this), this.contactParams.resolution, this.overlap.min, this.overlap.max);
+                this.computeAndDrawContactForces(this.clippedVertices, this.clippedDepths, this.clippedNumTris);
             }else{
                 this.implicitMesh.visible = false;
+                // Clear arrows when no overlap
+                for (let i = this.arrowGroup.children.length - 1; i >= 0; i--) {
+                    this.arrowGroup.remove(this.arrowGroup.children[i]);
+                }
             }
             geometryTiming = performance.now() - geometryTiming;
             //console.log("Time to compute overlap box: " + boundingBoxTiming + "ms", "Time to compute geometry: " + geometryTiming + "ms");
