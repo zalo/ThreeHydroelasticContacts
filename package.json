@@ -1,6 +1,6 @@
 {
 	"scripts": {
-		"build": "esbuild ./src/main.js --bundle --minify --sourcemap --format=esm --outdir=./build"
+		"build": "esbuild ./src/main.js --bundle --minify --sourcemap --format=esm --outdir=./build --external:../dist/physx-js-webidl.mjs"
 	},
 	"dependencies": {
 		"esbuild": "^0.23.0",
